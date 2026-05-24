@@ -197,7 +197,7 @@ function drawRecloser(){
   }).addTo(map);
 }
 
-function getLineColor(p){
+/*function getLineColor(p){
   const t = String(p.CONDUCTORTYPE || '').toUpperCase();
 
   if(t.includes('PIC')) return '#7c3aed';
@@ -206,8 +206,56 @@ function getLineColor(p){
   if(t.includes('SAC')) return '#2563eb';
 
   return '#111827';
-}
+}*/
+function getLineColor(p){
 
+  const feeder =
+    String(p.FEEDERID || '')
+      .toUpperCase()
+      .trim();
+
+  /* เอา 2 ตัวท้าย เช่น QSA01 -> 01 */
+  const suffix =
+    feeder.slice(-2);
+
+  switch(suffix){
+
+    case '01':
+      return '#dc2626'; // แดง
+
+    case '02':
+      return '#7c3aed'; // ม่วง
+
+    case '03':
+      return '#2563eb'; // น้ำเงิน
+
+    case '04':
+      return '#84cc16'; // เขียวอ่อน
+
+    case '05':
+      return '#06b6d4'; // ฟ้า
+
+    case '06':
+      return '#f97316'; // ส้ม
+
+    case '07':
+      return '#16a34a'; // เขียว
+
+    case '08':
+      return '#92400e'; // น้ำตาล
+
+    case '09':
+      return '#111827'; // ดำ
+
+    case '10':
+      return '#ec4899'; // ชมพู
+
+    default:
+      return '#9ca3af'; // เทา
+
+  }
+
+}
 
 function getLineWeight(p){
   return String(p.MAINORLATERAL || '').toUpperCase() === 'M' ? 4 : 2;
