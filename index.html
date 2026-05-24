@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <title>PEA GIS Track & Fault Current Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Tahoma,sans-serif;background:#f5f3ff;color:#111827}
+    header{background:linear-gradient(135deg,#4c1d95,#7c3aed);color:#fff;padding:14px 18px;box-shadow:0 2px 10px rgba(0,0,0,.18)}
+    header h2{margin:0;font-size:22px}
+    header div{font-size:13px;opacity:.9;margin-top:3px}
+    .wrap{padding:14px}
+    .card{background:#fff;border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+    label{font-size:12px;color:#555;display:block;margin-bottom:5px}
+    input,select,button{width:100%;padding:10px;border-radius:11px;border:1px solid #ddd;font-size:14px}
+    button{background:#6d28d9;color:#fff;border:none;font-weight:bold;cursor:pointer}
+    button:hover{background:#5b21b6}
+    button.secondary{background:#374151}
+    button.danger{background:#dc2626}
+    #map{height:72vh;border-radius:16px;overflow:hidden}
+    .status{background:#ede9fe;color:#4c1d95;border-radius:12px;padding:10px;font-size:13px}
+    pre{background:#111827;color:#d1fae5;border-radius:12px;padding:12px;overflow:auto;max-height:280px;font-size:12px}
+    .loading{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:99999}
+    .box{background:#fff;border-radius:18px;padding:22px;text-align:center;min-width:230px}
+    .spin{width:46px;height:46px;border:5px solid #ddd;border-top-color:#7c3aed;border-radius:50%;animation:spin 1s linear infinite;margin:auto}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .small{font-size:12px;color:#666}
+  </style>
+</head>
+
+<body>
+<header>
+  <h2>PEA GIS Track & Fault Current Test</h2>
+  <div>ArcGIS REST → Leaflet → Track DF/Fuse to CB → Fault Current</div>
+</header>
+
+<div class="wrap">
+
+  <div class="card">
+    <div class="grid">
+      <div>
+        <label>Feeder Prefix</label>
+        <input id="feederPrefix" value="QSA">
+      </div>
+
+      <div>
+        <label>Voltage</label>
+        <select id="voltage">
+          <option value="33">33 kV</option>
+          <option value="22">22 kV</option>
+        </select>
+      </div>
+
+      <div>
+  <label>Fault Type</label>
+  <select id="faultType">
+    <option value="1PH">1 Phase to Ground</option>
+    <option value="3PH">3 Phase</option>
+  </select>
+</div>
+<div>
+  <label>Downstream Fuse</label>
+  <select id="downstreamFuse">
+    <option value="6">6K</option>
+    <option value="8">8K</option>
+    <option value="10">10K</option>
+    <option value="12">12K</option>
+    <option value="15">15K</option>
+    <option value="20">20K</option>
+    <option value="25">25K</option>
+    <option value="30">30K</option>
+    <option value="40">40K</option>
+    <option value="50">50K</option>
+    <option value="65">65K</option>
+    <option value="80">80K</option>
+    <option value="100">100K</option>
+    <option value="140">140K</option>
+    <option value="200">200K</option>
+  </select>
+</div>
+
+<div>
+  <label>Upstream Fuse</label>
+  <select id="upstreamFuse">
+    <option value="10">10K</option>
+    <option value="12">12K</option>
+    <option value="15">15K</option>
+    <option value="20">20K</option>
+    <option value="25">25K</option>
+    <option value="30">30K</option>
+    <option value="40">40K</option>
+    <option value="50">50K</option>
+    <option value="65">65K</option>
+    <option value="80">80K</option>
+    <option value="100">100K</option>
+    <option value="140">140K</option>
+    <option value="200">200K</option>
+  </select>
+</div>
+    </div>
+
+    <br>
+
+    <div class="grid">
+      <button onclick="loadAll()">1) โหลดข้อมูล</button>
+      <button onclick="trackSelectedDevice()">2) Track + คำนวณ Fault</button>
+      <button class="secondary" onclick="clearTrack()">ล้าง Track</button>
+      <button class="danger" onclick="resetAll()">Reset ทั้งหมด</button>
+    </div>
+
+    <p class="small">
+      วิธีใช้: กดโหลดข้อมูล → คลิก DF/Fuse/Switch บนแผนที่ → กด Track + คำนวณ Fault
+    </p>
+  </div>
+
+  <div class="card">
+    <div id="status" class="status">พร้อมใช้งาน</div>
+  </div>
+
+  <div class="card">
+    <div id="map"></div>
+  </div>
+
+  <div class="card">
+    <b>ผลลัพธ์</b>
+    <pre id="resultBox">-</pre>
+  </div>
+
+</div>
+
+<div class="loading" id="loading">
+  <div class="box">
+    <div class="spin"></div>
+    <div style="margin-top:12px;font-weight:bold">กำลังประมวลผล...</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+/* ================= CONFIG ================= */
+
+const BASE = 'https://giss2.pea.co.th/arcgis/rest/services/PEA_FOR_EXPORT/MapServer';
+
+const LAYER_LINE = 19;
+const LAYER_CB = 11;
+const LAYER_SWITCH = 16;
+const LAYER_RECLOSER = 14;
+
+const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyM9trTrp0McGhOdBazbuyXgXDqEDTt8R9LbS3NvUEDlZT0AUR5AZSlHkoWYOnR6b6-YQ/exec';
+
+const SNAP_TOLERANCE_M = 3.0;
+const NODE_TOLERANCE_M = 1.0;
+
+const CONDUCTOR_PARAM = {
+  'PIC_185': { r: 0.164, x: 0.390 },
+  'PIC_95':  { r: 0.320, x: 0.410 },
+  'PIC_50':  { r: 0.641, x: 0.430 },
+  'ACSR_185':{ r: 0.164, x: 0.390 },
+  'ACSR_95': { r: 0.320, x: 0.410 },
+  'AAC_95':  { r: 0.320, x: 0.410 },
+  'DEFAULT': { r: 0.320, x: 0.410 }
+};
+
+/* ================= STATE ================= */
+
+let map;
+let lineLayer, cbLayer, swLayer, rcLayer, trackLayer;
+let lineGeojson, cbGeojson, swGeojson, rcGeojson;
+
+let selectedDevice = null;
+let selectedMarker = null;
+
+let graph = {
+  nodes: new Map(),
+  adj: new Map(),
+  edges: []
+};
+
+initMap();
+
+/* ================= MAP ================= */
+
+function initMap(){
+  map = L.map('map').setView([8.57,99.25],11);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:22,
+    attribution:'&copy; OpenStreetMap'
+  }).addTo(map);
+}
+
+function setStatus(msg){
+  document.getElementById('status').innerHTML = msg;
+}
+
+function showLoading(message = 'กำลังประมวลผล...'){
+
+  const loading = document.getElementById('loading');
+  const text = loading.querySelector('.box div:last-child');
+
+  if(text){
+    text.textContent = message;
+  }
+
+  loading.style.display = 'flex';
+
+}
+
+function hideLoading(){
+  document.getElementById('loading').style.display='none';
+}
+
+function resetAll(){
+
+  [
+    lineLayer,
+    cbLayer,
+    swLayer,
+    rcLayer,
+    trackLayer,
+    selectedMarker
+  ].forEach(layer => {
+    if(layer){
+      map.removeLayer(layer);
+    }
+  });
+
+  lineLayer = null;
+  cbLayer = null;
+  swLayer = null;
+  rcLayer = null;
+  trackLayer = null;
+  selectedMarker = null;
+
+  lineGeojson = null;
+  cbGeojson = null;
+  swGeojson = null;
+  rcGeojson = null;
+
+  selectedDevice = null;
+
+  graph = {
+    nodes: new Map(),
+    adj: new Map(),
+    edges: []
+  };
+
+  document.getElementById('resultBox').textContent = '-';
+  setStatus('Reset ทั้งหมดแล้ว');
+}
+
+function clearTrack(){
+
+  if(trackLayer){
+    map.removeLayer(trackLayer);
+  }
+
+  if(selectedMarker){
+    map.removeLayer(selectedMarker);
+  }
+
+  trackLayer = null;
+  selectedMarker = null;
+  selectedDevice = null;
+
+  document.getElementById('resultBox').textContent = '-';
+  setStatus('ล้าง Track แล้ว');
+}
+
+/* ================= LOAD DATA ================= */
+
+async function loadAll(){
+
+  showLoading();
+
+  try{
+
+    resetAll();
+
+    const feeder = document
+      .getElementById('feederPrefix')
+      .value
+      .trim()
+      .toUpperCase();
+
+    if(!feeder){
+      throw new Error('กรุณาระบุ Feeder Prefix เช่น QSA, PPB, NTA');
+    }
+
+    const where = `FEEDERID LIKE '${feeder}%'`;
+
+    const lineFields =
+      'OBJECTID,TAG,FEEDERID,OP_VOLT,CONDUCTORTYPE,CONDUCTORSIZE,IMPEDANCE,MAINORLATERAL,MEASURELENGTH,ENABLED,ELECTRICTRACEWEIGHT';
+
+    const cbFields =
+      'OBJECTID,TAG,FEEDERID,FACILITYID,OP_VOLT,PRESENTPOSITION,NORMALSTATUS,ENABLED,LOCATION,SHORTCIRCUITBREAKINGCURRENT,MAXCONTINUOUSCURRENT';
+
+    const swFields =
+      'OBJECTID,TAG,FEEDERID,FACILITYID,OP_VOLT,SUBTYPECODE,PRESENTPOSITION,NORMALSTATUS,ENABLED,MAXINTERRUPTINGCURRENT,MAXCONTINUOUSCURRENT,LOCATION';
+
+    const rcFields =
+      'OBJECTID,TAG,FEEDERID,FACILITYID,OP_VOLT,NORMALPOSITION,ENABLED,LOCATION,MAXINTERRUPTINGCURRENT,MAXCONTINUOUSCURRENT';
+
+    setStatus('กำลังโหลดสายไฟ...');
+    lineGeojson = await queryLayerGeojson(LAYER_LINE, where, lineFields);
+
+    setStatus('กำลังโหลด Circuit Breaker...');
+    cbGeojson = await queryLayerGeojson(LAYER_CB, where, cbFields);
+
+    setStatus('กำลังโหลด Switch/Fuse...');
+    swGeojson = await queryLayerGeojson(LAYER_SWITCH, where, swFields);
+
+    setStatus('กำลังโหลด Recloser...');
+    rcGeojson = await queryLayerGeojson(LAYER_RECLOSER, where, rcFields);
+
+    drawLines();
+    drawCB();
+    drawSwitches();
+    drawRecloser();
+
+    buildGraphFromLines();
+
+    fitAll();
+
+    setStatus(
+      `โหลดสำเร็จ ${feeder}: ` +
+      `สาย ${lineGeojson.features.length} เส้น, ` +
+      `CB ${cbGeojson.features.length} จุด, ` +
+      `Switch/Fuse ${swGeojson.features.length} จุด, ` +
+      `Recloser ${rcGeojson.features.length} จุด`
+    );
+
+  }catch(err){
+
+    console.error(err);
+    setStatus('Error: ' + err.message);
+    alert(err.message);
+
+  }finally{
+
+    hideLoading();
+
+  }
+
+}
+
+async function queryLayerGeojson(layerId, where, outFields){
+
+  const url = `${BASE}/${layerId}/query?` + new URLSearchParams({
+    where,
+    outFields,
+    returnGeometry: 'true',
+    outSR: '4326',
+    f: 'geojson'
+  });
+
+  const res = await fetch(url);
+
+  if(!res.ok){
+    throw new Error(`Layer ${layerId} HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  if(!data.features){
+    throw new Error(`Layer ${layerId} ไม่พบ features`);
+  }
+
+  return data;
+}
+
+/* ================= DRAW ================= */
+
+function drawLines(){
+
+  lineLayer = L.geoJSON(lineGeojson,{
+    style:f=>({
+      color:getLineColor(f.properties),
+      weight:getLineWeight(f.properties),
+      opacity:.9
+    }),
+    onEachFeature:(f,l)=>{
+      const p = f.properties || {};
+      l.bindPopup(`
+        <b>LINE</b><br>
+        TAG: ${p.TAG || '-'}<br>
+        FEEDERID: ${p.FEEDERID || '-'}<br>
+        CONDUCTOR: ${p.CONDUCTORTYPE || '-'} ${p.CONDUCTORSIZE || ''}<br>
+        IMPEDANCE: ${p.IMPEDANCE || '-'}<br>
+        MAIN/LATERAL: ${p.MAINORLATERAL || '-'}<br>
+        LENGTH: ${p.MEASURELENGTH || '-'}
+      `);
+    }
+  }).addTo(map);
+
+}
+
+function drawCB(){
+
+  cbLayer = L.geoJSON(cbGeojson,{
+    pointToLayer:(f,latlng)=>L.circleMarker(latlng,{
+      radius:7,
+      color:'#111827',
+      fillColor:'#facc15',
+      fillOpacity:1,
+      weight:2
+    }),
+    onEachFeature:(f,l)=>{
+      const p = f.properties || {};
+      l.bindPopup(`
+        <b>CB</b><br>
+        TAG: ${p.TAG || '-'}<br>
+        FACILITYID: ${p.FACILITYID || '-'}<br>
+        FEEDERID: ${p.FEEDERID || '-'}<br>
+        LOCATION: ${p.LOCATION || '-'}<br>
+        SC BREAKING: ${p.SHORTCIRCUITBREAKINGCURRENT || '-'}<br>
+        MAX CONT: ${p.MAXCONTINUOUSCURRENT || '-'} A
+      `);
+    }
+  }).addTo(map);
+
+}
+
+function drawSwitches(){
+
+  swLayer = L.geoJSON(swGeojson,{
+    pointToLayer:(f,latlng)=>L.circleMarker(latlng,{
+      radius:5,
+      color:'#7c2d12',
+      fillColor:'#fb923c',
+      fillOpacity:.95,
+      weight:1
+    }),
+    onEachFeature:(f,l)=>{
+      const p = f.properties || {};
+
+      l.on('click',()=>{
+        selectDevice(f,l.getLatLng());
+      });
+
+      l.bindPopup(`
+        <b>Switch / Fuse / DF</b><br>
+        TAG: ${p.TAG || '-'}<br>
+        FACILITYID: ${p.FACILITYID || '-'}<br>
+        FEEDERID: ${p.FEEDERID || '-'}<br>
+        LOCATION: ${p.LOCATION || '-'}<br>
+        MAX SC: ${p.MAXINTERRUPTINGCURRENT || '-'} kA<br>
+        MAX CONT: ${p.MAXCONTINUOUSCURRENT || '-'} A<br>
+        <hr>
+        <button onclick="trackSelectedDevice()" style="padding:6px 10px;border:none;border-radius:8px;background:#6d28d9;color:white;">
+          Track + Fault
+        </button>
+      `);
+    }
+  }).addTo(map);
+
+}
+
+function drawRecloser(){
+
+  rcLayer = L.geoJSON(rcGeojson,{
+    pointToLayer:(f,latlng)=>L.circleMarker(latlng,{
+      radius:8,
+      color:'#991b1b',
+      fillColor:'#ef4444',
+      fillOpacity:1,
+      weight:2
+    }),
+    onEachFeature:(f,l)=>{
+      const p = f.properties || {};
+      l.bindPopup(`
+        <b>RECLOSER</b><br>
+        TAG: ${p.TAG || '-'}<br>
+        FACILITYID: ${p.FACILITYID || '-'}<br>
+        FEEDERID: ${p.FEEDERID || '-'}<br>
+        LOCATION: ${p.LOCATION || '-'}<br>
+        MAX SC: ${p.MAXINTERRUPTINGCURRENT || '-'} kA<br>
+        MAX CONT: ${p.MAXCONTINUOUSCURRENT || '-'} A
+      `);
+    }
+  }).addTo(map);
+
+}
+
+function getLineColor(p){
+
+  const t = String(p.CONDUCTORTYPE || '').toUpperCase();
+
+  if(t.includes('PIC')) return '#7c3aed';
+  if(t.includes('ACSR')) return '#dc2626';
+  if(t.includes('AAC')) return '#16a34a';
+  if(t.includes('SAC')) return '#2563eb';
+
+  return '#111827';
+}
+
+function getLineWeight(p){
+  return String(p.MAINORLATERAL || '').toUpperCase() === 'M' ? 4 : 2;
+}
+
+function fitAll(){
+
+  const layers = [
+    lineLayer,
+    cbLayer,
+    swLayer,
+    rcLayer
+  ].filter(Boolean);
+
+  if(layers.length === 0) return;
+
+  const group = L.featureGroup(layers);
+
+  if(group.getBounds().isValid()){
+    map.fitBounds(group.getBounds(),{padding:[20,20]});
+  }
+
+}
+
+/* ================= SELECT DEVICE ================= */
+
+function selectDevice(feature, latlng){
+
+  selectedDevice = {
+    feature,
+    latlng
+  };
+
+  if(selectedMarker){
+    map.removeLayer(selectedMarker);
+  }
+
+  selectedMarker = L.circleMarker(latlng,{
+    radius:10,
+    color:'#f97316',
+    fillColor:'#fff7ed',
+    fillOpacity:.9,
+    weight:3
+  }).addTo(map);
+
+  selectedMarker.bindPopup('เลือกอุปกรณ์นี้สำหรับ Track').openPopup();
+
+  setStatus('เลือก Switch/Fuse แล้ว กด Track + คำนวณ Fault');
+
+}
+
+/* ================= GRAPH ================= */
+
+function buildGraphFromLines(){
+
+  graph = {
+    nodes:new Map(),
+    adj:new Map(),
+    edges:[]
+  };
+
+  lineGeojson.features.forEach((f,idx)=>{
+
+    const geom = f.geometry;
+    if(!geom) return;
+
+    const lines = geom.type === 'MultiLineString'
+      ? geom.coordinates
+      : [geom.coordinates];
+
+    lines.forEach(coords=>{
+
+      for(let i=0;i<coords.length-1;i++){
+
+        const a = coords[i];
+        const b = coords[i+1];
+
+        const aId = getNodeId(a);
+        const bId = getNodeId(b);
+
+        const distM = distanceMeters(a,b);
+
+        const edge = {
+          id: graph.edges.length,
+          a:aId,
+          b:bId,
+          aCoord:a,
+          bCoord:b,
+          distM,
+          feature:f,
+          lineIndex:idx
+        };
+
+        graph.edges.push(edge);
+
+        addAdj(aId,bId,edge);
+        addAdj(bId,aId,edge);
+
+      }
+
+    });
+
+  });
+
+}
+
+function getNodeId(coord){
+
+  const key = roundedCoordKey(coord, NODE_TOLERANCE_M);
+
+  if(!graph.nodes.has(key)){
+    graph.nodes.set(key,{
+      id:key,
+      coord
+    });
+  }
+
+  if(!graph.adj.has(key)){
+    graph.adj.set(key,[]);
+  }
+
+  return key;
+}
+
+function roundedCoordKey(coord,tolM){
+
+  const lat = coord[1];
+  const lng = coord[0];
+
+  const deg = tolM / 111320;
+
+  const x = Math.round(lng/deg);
+  const y = Math.round(lat/deg);
+
+  return `${x},${y}`;
+}
+
+function addAdj(a,b,edge){
+
+  if(!graph.adj.has(a)){
+    graph.adj.set(a,[]);
+  }
+
+  graph.adj.get(a).push({
+    to:b,
+    edge
+  });
+
+}
+
+/* ================= TRACK ================= */
+
+async function trackSelectedDevice(){
+
+  if(!selectedDevice){
+    alert('กรุณาคลิกเลือก Switch/Fuse/DF บนแผนที่ก่อน');
+    return;
+  }
+
+  if(!lineGeojson || !cbGeojson){
+    alert('กรุณาโหลดข้อมูลก่อน');
+    return;
+  }
+
+  showLoading('กำลัง Track เส้นทางและคำนวณกระแสลัดวงจร...');
+  await delayUI();
+
+  try{
+
+    console.time('TRACK_TOTAL');
+
+    clearOnlyTrackLayer();
+
+    console.time('START_SNAP');
+
+    const startSnap =
+      findNearestEdgeToLatLng(selectedDevice.latlng);
+
+    console.timeEnd('START_SNAP');
+
+    if(!startSnap || startSnap.distanceM > SNAP_TOLERANCE_M){
+
+      throw new Error(
+        `หาเส้นใกล้ DF/Fuse ไม่พบ ระยะใกล้สุด ${
+          startSnap
+            ? startSnap.distanceM.toFixed(2)
+            : '-'
+        } m`
+      );
+
+    }
+
+    const startNode =
+      nearestEdgeEndNode(
+        startSnap.edge,
+        selectedDevice.latlng
+      );
+
+    const feeder =
+      getFeatureFeeder(startSnap.edge.feature);
+
+    console.time('FIND_CB');
+
+    const best =
+      findBestCbByTopology(
+        startNode,
+        feeder
+      );
+
+    console.timeEnd('FIND_CB');
+
+    if(!best){
+      throw new Error(
+        'ไม่พบ CB ที่เชื่อมต่อกับโครงข่ายนี้'
+      );
+    }
+
+    console.time('DRAW_TRACK');
+
+    drawTrack(best.path.edges);
+
+    console.timeEnd('DRAW_TRACK');
+
+    console.time('FAULT_LOCAL');
+
+    const fault =
+      calculateFault(best.path.edges);
+
+    const conductorSummary =
+      summarizeConductors(best.path.edges);
+
+    console.timeEnd('FAULT_LOCAL');
+
+    
+
+    /* ================= API PAYLOAD ================= */
+
+    const apiPayload = {
+
+      action: 'fault',
+
+      stationCode:
+        feeder.substring(0,3),
+
+      faultType:
+  document.getElementById('faultType').value,
+
+      voltageKv:
+        Number(
+          document.getElementById('voltage').value
+        ),
+
+      segments: buildApiSegmentsFromEdges(best.path.edges)
+
+    };
+
+    /* ================= CALL GAS ================= */
+
+    console.time('CALL_GAS');
+
+    let apiResult = null;
+
+    try{
+
+      if(
+        typeof GAS_API_URL !== 'undefined'
+        &&
+        GAS_API_URL
+      ){
+
+      showLoading('กำลังส่งข้อมูลไปคำนวณที่ Google Sheet...');
+      await delayUI();
+      apiResult = await callFaultApi(apiPayload);
+
+      }
+
+    }catch(apiErr){
+
+      console.error(
+        'GAS API ERROR',
+        apiErr
+      );
+
+    }
+
+    console.timeEnd('CALL_GAS');
+
+    /* ================= RESULT ================= */
+
+    const result = {
+
+      selectedDevice:
+        selectedDevice.feature.properties,
+
+      feeder,
+
+      sourceType: 'CB',
+
+      sourceDevice:
+        best.device.feature.properties,
+
+      trackDistance_m:
+        best.path.distanceM,
+
+      trackDistance_km:
+        best.path.distanceM / 1000,
+
+      edgeCount:
+        best.path.edges.length,
+
+      conductorSummary,
+
+      localEstimate: {
+
+        totalLineR_ohm:
+          fault.lineR,
+
+        totalLineX_ohm:
+          fault.lineX,
+
+        sourceR_ohm:
+          fault.sourceR,
+
+        sourceX_ohm:
+          fault.sourceX,
+
+        totalR_ohm:
+          fault.totalR,
+
+        totalX_ohm:
+          fault.totalX,
+
+        zMagnitude_ohm:
+          fault.zMag,
+
+        voltage_kV:
+          fault.voltageKv,
+
+        faultCurrent_1ph_A:
+          fault.ifaultA,
+
+        faultCurrent_1ph_kA:
+          fault.ifaultA / 1000
+
+      },
+
+      apiFaultResult:
+        apiResult
+
+    };
+
+    document.getElementById('resultBox').textContent =
+      JSON.stringify(result,null,2);
+
+    /* ================= SHOW RESULT ================= */
+
+    let showKA =
+  fault.ifaultA / 1000;
+
+if(
+  apiResult
+  &&
+  apiResult.selectedFault
+  &&
+  apiResult.selectedFault.current_kA
+){
+
+  showKA =
+    apiResult.selectedFault.current_kA;
+
+}
+
+const coordResult = checkFuseCoordination(
+  document.getElementById('downstreamFuse').value,
+  document.getElementById('upstreamFuse').value,
+  showKA * 1000
+);
+
+result.fuseCoordination = coordResult;
+
+    const faultTypeText =
+  document.getElementById('faultType').value === '3PH'
+    ? '3PH'
+    : '1PH-G';
+
+setStatus(
+  `Track สำเร็จ ไปยัง CB ` +
+  `ระยะ ${(best.path.distanceM/1000).toFixed(3)} km, ` +
+  `${faultTypeText} ≈ ${Number(showKA).toFixed(3)} kA, ` +
+  `Fuse: ${coordResult.message}`
+);
+
+    console.timeEnd('TRACK_TOTAL');
+
+  }catch(err){
+
+    console.error(err);
+
+    setStatus(
+      'Error: ' + err.message
+    );
+
+    alert(err.message);
+
+  }finally{
+
+    hideLoading();
+
+  }
+
+}
+
+function delayUI(ms = 50){
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function findBestCbByTopology(startNode, feeder){
+
+  const candidates = [];
+
+  cbGeojson.features.forEach(f => {
+
+    const ll = featurePointLatLng(f);
+    if(!ll) return;
+
+    const p = f.properties || {};
+    const fid = String(p.FEEDERID || '').toUpperCase();
+
+    if(feeder && !fid.startsWith(feeder.toUpperCase())) return;
+
+    const snap = findNearestEdgeToLatLng(ll);
+    if(!snap) return;
+
+    const node = nearestEdgeEndNode(snap.edge, ll);
+
+    candidates.push({
+      type: 'CB',
+      feature: f,
+      latlng: ll,
+      node,
+      snap
+    });
+
+  });
+
+  if(candidates.length === 0){
+    return null;
+  }
+
+  const all = dijkstraAll(startNode);
+
+  let best = null;
+
+  candidates.forEach(device => {
+
+    const d = all.dist.get(device.node);
+
+    if(d === undefined || !isFinite(d)) return;
+
+    const path = rebuildPathFromDijkstra(
+      startNode,
+      device.node,
+      all
+    );
+
+    if(!path) return;
+
+    const item = {
+      type: 'CB',
+      device,
+      path
+    };
+
+    if(!best || path.distanceM < best.path.distanceM){
+      best = item;
+    }
+
+  });
+
+  return best;
+
+}
+
+function dijkstraAll(start){
+
+  const dist = new Map();
+  const prev = new Map();
+  const prevEdge = new Map();
+  const visited = new Set();
+
+  dist.set(start,0);
+
+  while(true){
+
+    let u = null;
+    let best = Infinity;
+
+    for(const [node,d] of dist.entries()){
+
+      if(!visited.has(node) && d < best){
+        best = d;
+        u = node;
+      }
+
+    }
+
+    if(u === null) break;
+
+    visited.add(u);
+
+    const neighbors = graph.adj.get(u) || [];
+
+    neighbors.forEach(n => {
+
+      const alt = dist.get(u) + n.edge.distM;
+
+      if(alt < (dist.get(n.to) ?? Infinity)){
+
+        dist.set(n.to, alt);
+        prev.set(n.to, u);
+        prevEdge.set(n.to, n.edge);
+
+      }
+
+    });
+
+  }
+
+  return {
+    dist,
+    prev,
+    prevEdge
+  };
+
+}
+
+function rebuildPathFromDijkstra(start,target,data){
+
+  if(!data.dist.has(target)){
+    return null;
+  }
+
+  const edges = [];
+  let cur = target;
+
+  while(cur !== start){
+
+    const e = data.prevEdge.get(cur);
+    const p = data.prev.get(cur);
+
+    if(!e || !p){
+      return null;
+    }
+
+    edges.push(e);
+    cur = p;
+
+  }
+
+  edges.reverse();
+
+  return {
+    distanceM:data.dist.get(target),
+    edges
+  };
+
+}
+
+function clearOnlyTrackLayer(){
+
+  if(trackLayer){
+    map.removeLayer(trackLayer);
+  }
+
+  trackLayer = null;
+}
+
+function getFeatureFeeder(f){
+
+  const p = f.properties || {};
+  return p.FEEDERID || p.FEEDER || '';
+
+}
+
+function featurePointLatLng(f){
+
+  if(!f.geometry) return null;
+
+  if(f.geometry.type === 'Point'){
+    return L.latLng(
+      f.geometry.coordinates[1],
+      f.geometry.coordinates[0]
+    );
+  }
+
+  return null;
+}
+
+function findNearestEdgeToLatLng(latlng){
+
+  let best = null;
+  const p = [latlng.lng, latlng.lat];
+
+  graph.edges.forEach(edge=>{
+
+    const d = pointToSegmentDistanceMeters(
+      p,
+      edge.aCoord,
+      edge.bCoord
+    );
+
+    if(!best || d < best.distanceM){
+      best = {
+        edge,
+        distanceM:d
+      };
+    }
+
+  });
+
+  return best;
+}
+
+function nearestEdgeEndNode(edge,latlng){
+
+  const p = [latlng.lng, latlng.lat];
+
+  const da = distanceMeters(p, edge.aCoord);
+  const db = distanceMeters(p, edge.bCoord);
+
+  return da <= db ? edge.a : edge.b;
+}
+
+function drawTrack(edges){
+
+  const features = edges.map(e=>e.feature);
+  const unique = [];
+  const seen = new Set();
+
+  features.forEach(f=>{
+
+    const id =
+      f.properties?.OBJECTID ||
+      f.properties?.TAG ||
+      JSON.stringify(f.geometry).slice(0,50);
+
+    if(!seen.has(id)){
+      seen.add(id);
+      unique.push(f);
+    }
+
+  });
+
+  trackLayer = L.geoJSON({
+    type:'FeatureCollection',
+    features:unique
+  },{
+    style:{
+      color:'#84cc16',
+      weight:7,
+      opacity:0.5
+    }
+  }).addTo(map);
+
+  if(trackLayer.getBounds().isValid()){
+    map.fitBounds(trackLayer.getBounds(),{padding:[30,30]});
+  }
+
+}
+
+/* ================= FAULT CURRENT ================= */
+
+function calculateFault(edges){
+
+  const voltageKv = Number(document.getElementById('voltage').value);
+
+  const sourceR = 0;
+  const sourceX = 0;
+
+  let lineR = 0;
+  let lineX = 0;
+
+  edges.forEach(e=>{
+
+    const p = e.feature.properties || {};
+    const lenKm = e.distM / 1000;
+
+    const key = getConductorKey(p);
+    const z = CONDUCTOR_PARAM[key] || CONDUCTOR_PARAM.DEFAULT;
+
+    lineR += z.r * lenKm;
+    lineX += z.x * lenKm;
+
+  });
+
+  const totalR = sourceR + lineR;
+  const totalX = sourceX + lineX;
+  const zMag = Math.sqrt(totalR*totalR + totalX*totalX);
+
+  const vPhase = (voltageKv * 1000) / Math.sqrt(3);
+  const ifaultA = zMag > 0 ? vPhase / zMag : 0;
+
+  return {
+    voltageKv,
+    sourceR,
+    sourceX,
+    lineR,
+    lineX,
+    totalR,
+    totalX,
+    zMag,
+    ifaultA
+  };
+}
+
+function buildApiSegmentsFromEdges(edges){
+
+  const map = new Map();
+
+  edges.forEach(e => {
+
+    const p = e.feature.properties || {};
+
+    const conductorType =
+      String(p.CONDUCTORTYPE || '')
+        .toUpperCase()
+        .trim();
+
+    const conductorSize =
+      String(p.CONDUCTORSIZE || '')
+        .trim();
+
+    const lineType = 'SP';
+
+    const key =
+      `${conductorType}|${conductorSize}|${lineType}`;
+
+    const lengthKm =
+      e.distM / 1000;
+
+    if(!map.has(key)){
+      map.set(key,{
+        conductorType,
+        conductorSize,
+        lineType,
+        lengthKm: 0
+      });
+    }
+
+    map.get(key).lengthKm += lengthKm;
+
+  });
+
+  return Array.from(map.values()).map(s => ({
+    ...s,
+    lengthKm: Number(s.lengthKm.toFixed(6))
+  }));
+
+}
+
+function summarizeConductors(edges){
+
+  const summary = {};
+
+  edges.forEach(e=>{
+
+    const p = e.feature.properties || {};
+    const type = String(p.CONDUCTORTYPE || 'UNKNOWN').trim();
+    const size = String(p.CONDUCTORSIZE || '').trim();
+    const key = `${type} ${size}`.trim();
+    const lenKm = e.distM / 1000;
+
+    if(!summary[key]){
+      summary[key] = {
+        length_km:0,
+        count:0
+      };
+    }
+
+    summary[key].length_km += lenKm;
+    summary[key].count += 1;
+
+  });
+
+  Object.keys(summary).forEach(k=>{
+    summary[k].length_km =
+      Number(summary[k].length_km.toFixed(4));
+  });
+
+  return summary;
+}
+
+function getConductorKey(p){
+
+  const type = String(p.CONDUCTORTYPE || '').toUpperCase().trim();
+  const size = String(p.CONDUCTORSIZE || '').trim();
+
+  if(type.includes('PIC') && size==='185') return 'PIC_185';
+  if(type.includes('PIC') && size==='95') return 'PIC_95';
+  if(type.includes('PIC') && size==='50') return 'PIC_50';
+  if(type.includes('ACSR') && size==='185') return 'ACSR_185';
+  if(type.includes('ACSR') && size==='95') return 'ACSR_95';
+  if(type.includes('AAC') && size==='95') return 'AAC_95';
+
+  return 'DEFAULT';
+}
+
+/* ================= GEOMETRY ================= */
+
+function distanceMeters(a,b){
+
+  const lat1 = a[1] * Math.PI/180;
+  const lat2 = b[1] * Math.PI/180;
+  const dLat = (b[1]-a[1]) * Math.PI/180;
+  const dLng = (b[0]-a[0]) * Math.PI/180;
+
+  const R = 6371000;
+
+  const x =
+    Math.sin(dLat/2)**2 +
+    Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+
+  return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));
+}
+
+function pointToSegmentDistanceMeters(p,a,b){
+
+  const lat = p[1] * Math.PI/180;
+
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * Math.cos(lat);
+
+  const px = p[0]*mPerDegLng;
+  const py = p[1]*mPerDegLat;
+  const ax = a[0]*mPerDegLng;
+  const ay = a[1]*mPerDegLat;
+  const bx = b[0]*mPerDegLng;
+  const by = b[1]*mPerDegLat;
+
+  const dx = bx-ax;
+  const dy = by-ay;
+
+  if(dx===0 && dy===0){
+    return Math.hypot(px-ax,py-ay);
+  }
+
+  let t =
+    ((px-ax)*dx + (py-ay)*dy) /
+    (dx*dx + dy*dy);
+
+  t = Math.max(0,Math.min(1,t));
+
+  const cx = ax + t*dx;
+  const cy = ay + t*dy;
+
+  return Math.hypot(px-cx,py-cy);
+}
+
+async function callFaultApi(payload){
+
+  const res = await fetch(GAS_API_URL, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json();
+
+  if(!data.ok){
+    throw new Error(data.error || 'Apps Script API error');
+  }
+
+  return data;
+}
+
+const FUSE_K = [6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 65, 80, 100, 140, 200];
+
+const FUSE_COORD_TABLE = {
+  6:   {10:190,12:350,15:510,20:650,25:840,30:1060,40:1340,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  8:   {12:210,15:440,20:650,25:840,30:1060,40:1340,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  10:  {15:300,20:540,25:840,30:1060,40:1340,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  12:  {20:320,25:710,30:1050,40:1340,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  15:  {25:430,30:870,40:1340,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  20:  {30:500,40:1100,50:1700,65:2200,80:2800,100:3900,140:5800,200:9200},
+  25:  {40:660,50:1350,65:2200,80:2800,100:3900,140:5800,200:9200},
+  30:  {50:850,65:1700,80:2800,100:3900,140:5800,200:9200},
+  40:  {65:1100,80:2200,100:3900,140:5800,200:9200},
+  50:  {80:1450,100:3500,140:5800,200:9200},
+  65:  {100:2400,140:5800,200:9200},
+  80:  {140:4500,200:9200},
+  100: {140:2000,200:9100},
+  140: {200:4000}
+};
+
+function checkFuseCoordination(loadFuse, sourceFuse, faultCurrentA){
+
+  const downstream = Number(loadFuse);
+  const upstream = Number(sourceFuse);
+  const faultA = Number(faultCurrentA);
+
+  const maxCoordA =
+    FUSE_COORD_TABLE?.[downstream]?.[upstream];
+
+  if(!maxCoordA){
+    return {
+      ok: false,
+      status: 'NO_TABLE',
+      message: `ไม่มีข้อมูล coordination สำหรับ ${downstream}K → ${upstream}K`,
+      downstreamFuse: downstream,
+      upstreamFuse: upstream,
+      faultCurrentA: faultA,
+      maxCoordA: null
+    };
+  }
+
+  const isCoordinate =
+    faultA <= maxCoordA;
+
+  return {
+    ok: true,
+    status: isCoordinate ? 'COORDINATE' : 'NOT_COORDINATE',
+    message: isCoordinate
+      ? `${downstream}K กับ ${upstream}K ประสานงานกันได้`
+      : `${downstream}K กับ ${upstream}K ไม่ประสานงานกัน`,
+    downstreamFuse: downstream,
+    upstreamFuse: upstream,
+    faultCurrentA: faultA,
+    maxCoordA,
+    marginA: maxCoordA - faultA,
+    marginPercent: ((maxCoordA - faultA) / maxCoordA) * 100
+  };
+
+}
+
+</script>
+</body>
+</html>
