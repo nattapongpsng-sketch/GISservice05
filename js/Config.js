@@ -40,7 +40,27 @@ const FUSE_COORD_TABLE = {
   100: {140:2000,200:9100},
   140: {200:4000}
 };
+let map;
 
+let lineLayer;
+let cbLayer;
+let swLayer;
+let rcLayer;
+let trackLayer;
+
+let lineGeojson;
+let cbGeojson;
+let swGeojson;
+let rcGeojson;
+
+let selectedDevice = null;
+let selectedMarker = null;
+
+let graph = {
+  nodes: new Map(),
+  adj: new Map(),
+  edges: []
+};
 /* ================= GLOBAL STATE ================= */
 
 let map;
